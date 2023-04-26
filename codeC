@@ -1,0 +1,156 @@
+#include <stdio.h>
+#include <wiringPi.h>
+#include <wiringPiI2C.h>
+
+#define BUTTON_LEFT 3
+#define BUTTON_RIGHT 2
+#define BUTTON_UP 0
+#define BUTTON_DOWN 7
+#define BUTTON_CENTER 30
+#define BUTTON_RETURN 21
+
+void lcd_command(int fd, int command) {
+    wiringPiI2CWriteReg8(fd, 0x80, command);
+    delay(1);
+}
+
+void lcd_data(int fd, int data) {
+    wiringPiI2CWriteReg8(fd, 0x40, data);
+    delay(1);
+}
+
+int main() {
+    int fd_tea5767;
+    int fd_lcd;
+    float frequency = 87.5; // Frecuencia inicial
+    int volume = 7; // Volumen inicial
+    int step = 1000; // Paso inicial de frecuencia
+    char lcd_text[17]; // Buffer para la pantalla LCD
+    int lcd_timer = 0; // Temporizador para la pantalla LCD
+
+    wiringPiSetup();
+    pinMode(BUTTON_LEFT, INPUT);
+    pinMode(BUTTON_RIGHT, INPUT);
+    pinMode(BUTTON_UP, INPUT);
+    pinMode(BUTTON_DOWN, INPUT);
+    pinMode(BUTTON_CENTER, INPUT);
+    pinMode(BUTTON_RETURN, INPUT);
+    pullUpDnControl(BUTTON_LEFT, PUD_UP);
+    pullUpDnControl(BUTTON_RIGHT, PUD_UP);
+    pullUpDnControl(BUTTON_UP, PUD_UP);
+    pullUpDnControl(BUTTON_DOWN, PUD_UP);
+    pullUpDnControl(BUTTON_CENTER, PUD_UP);
+    pullUpDnControl(BUTTON_RETURN, PUD_UP);
+
+    // Configurar la pantalla LCD
+    fd_lcd = wiringPiI2CSetup(0x27);
+    lcd_command(fd_lcd, 0x33);
+    lcd_command(fd_lcd, 0x32);
+    lcd_command(fd_lcd, 0x28);
+    lcd_command(fd_lcd, 0x0C);
+    lcd_command(fd_lcd, 0x06);
+    lcd_command(fd_lcd, 0x01);
+    delay(10);
+
+    // Configurar el módulo TEA5767
+    fd_tea5767 = wiringPiI2CSetup(0x60);
+    wiringPiI2CWriteReg16(fd_tea5767, 0x0000); // Configurar la frecuencia inicial
+    wiringPiI2CWriteReg8(fd_tea5767, 0xC0 | volume); // Configurar el volumen inicial
+
+    while(1) {
+        delay(50);
+
+        // Control de frecuencia
+        if(digitalRead(BUTTON_LEFT) == LOW) {
+            frequency -= step/1000000.0;
+            if(frequency < 87.5) frequency = 108.0;
+            wiringPiI2CWriteReg16(fd_tea5767, 0x0000 | ((int)((frequency - 87.5)/0.1) << 6));
+            sprintf(lcd_text, "%.1f MHz", frequency);
+            lcd_command(fd_lcd, 0x80);
+            for(int i = 0; i < 16; i++) {
+                lcd_data(fd_lcd, lcd_text[i]);
+            }
+            lcd_timer = 0; // Reiniciar el temporizador de la pantalla LCD
+        }
+        if(digitalRead(BUTTON_RIGHT) == LOW) {
+            frequency += step/1000000.0;
+            if(frequency > 108.0) frequency = 87.5;
+            wiringPiI2CWriteReg16(fd_tea5767, 0x0000 | ((int)((frequency - 87.5)/0.1) << 6));
+            sprintf(lcd_text, "%.1f MHz", frequency);
+            lcd_command(fd_lcd, 0x80);
+            for(int i = 0; i < 16; i++) {
+                lcd_data(fd_lcd, lcd_text[i]);
+            }
+            lcd_timer = 0; // Reiniciar el temporizador de la pantalla LCD
+        }
+
+        // Control de volumen
+        if(digitalRead(BUTTON_UP) == LOW) {
+            volume++;
+            if(volume > 15) volume = 15;
+            wiringPiI2CWriteReg8(fd_tea5767, 0xC0 | volume);
+            sprintf(lcd_text, "VOL: %d", volume);
+            lcd_command(fd_lcd, 0xC0);
+            for(int i = 0; i < 16; i++) {
+                lcd_data(fd_lcd, lcd_text[i]);
+            }
+            lcd_timer = 0; // Reiniciar el temporizador de la pantalla LCD
+        }
+        if(digitalRead(BUTTON_DOWN) == LOW) {
+            volume--;
+            if(volume < 0) volume = 0;
+            wiringPiI2CWriteReg8(fd_tea5767, 0xC0 | volume);
+            sprintf(lcd_text, "VOL: %d", volume);
+            lcd_command(fd_lcd, 0xC0);
+            for(int i = 0; i < 16; i++) {
+                lcd_data(fd_lcd, lcd_text[i]);
+            }
+            lcd_timer = 0; // Reiniciar el temporizador de la pantalla LCD
+        }
+
+        // Control del paso de frecuencia
+        if(digitalRead(BUTTON_CENTER) == LOW) {
+            if(step == 1000) step = 5000;
+            else if(step == 5000) step = 10000;
+            else if(step == 10000) step = 25000;
+            else step = 1000;
+            sprintf(lcd_text, "STEP: %dkHz", step/1000);
+            lcd_command(fd_lcd, 0xC0);
+            for(int i = 0; i < 16; i++) {
+                lcd_data(fd_lcd, lcd_text[i]);
+            }
+            lcd_timer = 0; // Reiniciar el temporizador de la pantalla LCD
+        }
+
+        // Control de la pantalla LCD
+        lcd_timer++;
+        if(lcd_timer > 80) { // 4 segundos
+            lcd_command(fd_lcd, 0x01); // Borrar la pantalla
+            sprintf(lcd_text, "%.1f MHz %d", frequency, volume);
+            lcd_command(fd_lcd, 0x80);
+            for(int i = 0; i < 16; i++) {
+                lcd_data(fd_lcd, lcd_text[i]);
+            }
+            lcd_timer = 0;
+        }
+
+        // Mostrar el mensaje de bienvenida al presionar el botón RETURN
+        if(digitalRead(BUTTON_RETURN) == LOW) {
+            lcd_command(fd_lcd, 0x01); // Borrar la pantalla
+            sprintf(lcd_text, "FLIPPER RADIO");
+            lcd_command(fd_lcd, 0x80);
+            for(int i = 0; i < 16; i++) {
+                lcd_data(fd_lcd, lcd_text[i]);
+            }
+            sprintf
+            lcd_text, " by EA3IAV");
+            lcd_command(fd_lcd, 0xC0);
+            for(int i = 0; i < 16; i++) {
+                lcd_data(fd_lcd, lcd_text[i]);
+            }
+            lcd_timer = 0;
+        }
+    }
+
+    return 0;
+}
